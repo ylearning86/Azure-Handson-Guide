@@ -28,24 +28,24 @@
 
 ```mermaid
 graph TB
-    subgraph "Azure Subscription"
-        RG[リソースグループ<br/>rg-handson-vm]
-        
-        subgraph "仮想ネットワーク"
-            BASTION[Azure Bastion<br/>安全な接続]
-            VM[仮想マシン<br/>vm-handson-win01<br/>Windows Server 2022]
-            NSG[ネットワーク<br/>セキュリティグループ]
-        end
-        
-        subgraph "監視・バックアップ"
-            LAW[Log Analytics<br/>ワークスペース]
-            RSV[Recovery Services<br/>コンテナー]
-            MON[Azure Monitor]
-        end
-        
-        subgraph "ストレージ"
-            OSDISK[OS ディスク<br/>C: ドライブ]
-            DATADISK[データディスク<br/>E: ドライブ]
+    subgraph SUB["Azure Subscription"]
+        subgraph RG["リソースグループ: rg-handson-vm"]
+            subgraph VNET["仮想ネットワーク: vnet-handson"]
+                BASTION[Azure Bastion<br/>bastion-handson]
+                VM[仮想マシン<br/>vm-handson-win01<br/>Windows Server 2022]
+                NSG[ネットワーク<br/>セキュリティグループ]
+            end
+            
+            subgraph MONITOR["監視・バックアップ"]
+                LAW[Log Analytics<br/>ワークスペース]
+                RSV[Recovery Services<br/>コンテナー]
+                MON[Azure Monitor]
+            end
+            
+            subgraph STORAGE["ストレージ"]
+                OSDISK[OS ディスク<br/>C: ドライブ]
+                DATADISK[データディスク<br/>E: ドライブ]
+            end
         end
     end
     
