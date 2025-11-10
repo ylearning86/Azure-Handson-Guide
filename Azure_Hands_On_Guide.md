@@ -15,6 +15,7 @@
 8. [ハンズオン完了後のクリーンアップ](#ハンズオン完了後のクリーンアップ)
 9. [参考リソース](#参考リソース)
 10. [まとめ](#まとめ)
+11. [（参考）IaCを利用した場合](#参考iacを利用した場合)
 
 ---
 
@@ -1397,3 +1398,556 @@ graph TD
 ✅ 一般的なトラブルの診断と解決方法
 
 これらの基礎知識は、Azureでの実際の運用業務に直接活用できます。
+
+---
+
+## （参考）IaCを利用した場合
+
+### 学習目標
+
+- Infrastructure as Code (IaC) の概念を理解する
+- Bicepを使用してAzureリソースを自動デプロイする
+- 再現可能なインフラストラクチャ構築を学ぶ
+
+### Bicepとは？
+
+Bicep は、Azureリソースを宣言的に定義するための言語です。JSONベースのARM テンプレートよりも簡潔で読みやすく、IntelliSenseサポートもあります。
+
+**メリット:**
+- コードとしてインフラを管理（バージョン管理可能）
+- 再現性の高いデプロイ
+- 手動作業によるミスの削減
+- 環境の標準化
+
+### Bicepファイルの構成
+
+このハンズオンで作成したリソースをBicepでデプロイするための完全なコードを提供します。
+
+#### main.bicep
+
+```bicep
+// パラメータ定義
+@description('リソースのデプロイ先リージョン')
+param location string = 'japaneast'
+
+@description('仮想マシンの管理者ユーザー名')
+param adminUsername string = 'azureuser'
+
+@description('仮想マシンの管理者パスワード')
+@secure()
+param adminPassword string
+
+@description('仮想マシンのサイズ')
+param vmSize string = 'Standard_B2s'
+
+@description('環境タグ')
+param environmentTag string = 'Hands-on'
+
+// 変数定義
+var resourceGroupName = 'rg-handson-vm'
+var vnetName = 'vnet-handson'
+var subnetName = 'default'
+var bastionSubnetName = 'AzureBastionSubnet'
+var vmName = 'vm-handson-win01'
+var nicName = '${vmName}-nic'
+var nsgName = '${vmName}-nsg'
+var bastionName = 'bastion-handson'
+var bastionPublicIpName = 'pip-${bastionName}'
+var osDiskName = '${vmName}-osdisk'
+var dataDiskName = '${vmName}-datadisk'
+var lawName = 'law-handson-${uniqueString(resourceGroup().id)}'
+var rsvName = 'rsv-handson'
+var backupPolicyName = 'DefaultPolicy'
+
+// 仮想ネットワーク
+resource vnet 'Microsoft.Network/virtualNetworks@2023-05-01' = {
+  name: vnetName
+  location: location
+  tags: {
+    Environment: environmentTag
+    Purpose: 'Training'
+  }
+  properties: {
+    addressSpace: {
+      addressPrefixes: [
+        '10.0.0.0/16'
+      ]
+    }
+    subnets: [
+      {
+        name: subnetName
+        properties: {
+          addressPrefix: '10.0.0.0/24'
+          networkSecurityGroup: {
+            id: nsg.id
+          }
+        }
+      }
+      {
+        name: bastionSubnetName
+        properties: {
+          addressPrefix: '10.0.1.0/26'
+        }
+      }
+    ]
+  }
+}
+
+// ネットワークセキュリティグループ
+resource nsg 'Microsoft.Network/networkSecurityGroups@2023-05-01' = {
+  name: nsgName
+  location: location
+  tags: {
+    Environment: environmentTag
+    Purpose: 'Training'
+  }
+  properties: {
+    securityRules: [
+      {
+        name: 'Allow-HTTP'
+        properties: {
+          priority: 310
+          protocol: 'Tcp'
+          access: 'Allow'
+          direction: 'Inbound'
+          sourceAddressPrefix: '*'
+          sourcePortRange: '*'
+          destinationAddressPrefix: '*'
+          destinationPortRange: '80'
+        }
+      }
+      {
+        name: 'Allow-HTTPS'
+        properties: {
+          priority: 320
+          protocol: 'Tcp'
+          access: 'Allow'
+          direction: 'Inbound'
+          sourceAddressPrefix: '*'
+          sourcePortRange: '*'
+          destinationAddressPrefix: '*'
+          destinationPortRange: '443'
+        }
+      }
+    ]
+  }
+}
+
+// ネットワークインターフェース
+resource nic 'Microsoft.Network/networkInterfaces@2023-05-01' = {
+  name: nicName
+  location: location
+  tags: {
+    Environment: environmentTag
+    Purpose: 'Training'
+  }
+  properties: {
+    ipConfigurations: [
+      {
+        name: 'ipconfig1'
+        properties: {
+          subnet: {
+            id: vnet.properties.subnets[0].id
+          }
+          privateIPAllocationMethod: 'Dynamic'
+        }
+      }
+    ]
+  }
+}
+
+// 仮想マシン
+resource vm 'Microsoft.Compute/virtualMachines@2023-07-01' = {
+  name: vmName
+  location: location
+  tags: {
+    Environment: environmentTag
+    Purpose: 'Training'
+  }
+  properties: {
+    hardwareProfile: {
+      vmSize: vmSize
+    }
+    osProfile: {
+      computerName: vmName
+      adminUsername: adminUsername
+      adminPassword: adminPassword
+      windowsConfiguration: {
+        enableAutomaticUpdates: true
+        provisionVMAgent: true
+      }
+    }
+    storageProfile: {
+      imageReference: {
+        publisher: 'MicrosoftWindowsServer'
+        offer: 'WindowsServer'
+        sku: '2022-datacenter-azure-edition'
+        version: 'latest'
+      }
+      osDisk: {
+        name: osDiskName
+        createOption: 'FromImage'
+        managedDisk: {
+          storageAccountType: 'StandardSSD_LRS'
+        }
+      }
+      dataDisks: [
+        {
+          name: dataDiskName
+          diskSizeGB: 128
+          lun: 0
+          createOption: 'Empty'
+          managedDisk: {
+            storageAccountType: 'StandardSSD_LRS'
+          }
+        }
+      ]
+    }
+    networkProfile: {
+      networkInterfaces: [
+        {
+          id: nic.id
+        }
+      ]
+    }
+  }
+}
+
+// Azure Bastion パブリックIP
+resource bastionPublicIp 'Microsoft.Network/publicIPAddresses@2023-05-01' = {
+  name: bastionPublicIpName
+  location: location
+  tags: {
+    Environment: environmentTag
+    Purpose: 'Training'
+  }
+  sku: {
+    name: 'Standard'
+  }
+  properties: {
+    publicIPAllocationMethod: 'Static'
+  }
+}
+
+// Azure Bastion
+resource bastion 'Microsoft.Network/bastionHosts@2023-05-01' = {
+  name: bastionName
+  location: location
+  tags: {
+    Environment: environmentTag
+    Purpose: 'Training'
+  }
+  sku: {
+    name: 'Basic'
+  }
+  properties: {
+    ipConfigurations: [
+      {
+        name: 'bastionIpConfig'
+        properties: {
+          subnet: {
+            id: vnet.properties.subnets[1].id
+          }
+          publicIPAddress: {
+            id: bastionPublicIp.id
+          }
+        }
+      }
+    ]
+  }
+}
+
+// Log Analytics ワークスペース
+resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2022-10-01' = {
+  name: lawName
+  location: location
+  tags: {
+    Environment: environmentTag
+    Purpose: 'Training'
+  }
+  properties: {
+    sku: {
+      name: 'PerGB2018'
+    }
+    retentionInDays: 30
+  }
+}
+
+// Azure Monitor Agent 拡張機能
+resource vmExtension 'Microsoft.Compute/virtualMachines/extensions@2023-07-01' = {
+  parent: vm
+  name: 'AzureMonitorWindowsAgent'
+  location: location
+  properties: {
+    publisher: 'Microsoft.Azure.Monitor'
+    type: 'AzureMonitorWindowsAgent'
+    typeHandlerVersion: '1.0'
+    autoUpgradeMinorVersion: true
+  }
+}
+
+// データ収集ルール
+resource dcr 'Microsoft.Insights/dataCollectionRules@2022-06-01' = {
+  name: 'dcr-handson-vm'
+  location: location
+  tags: {
+    Environment: environmentTag
+    Purpose: 'Training'
+  }
+  properties: {
+    dataSources: {
+      performanceCounters: [
+        {
+          name: 'perfCounterDataSource'
+          streams: [
+            'Microsoft-Perf'
+          ]
+          samplingFrequencyInSeconds: 60
+          counterSpecifiers: [
+            '\\Processor(_Total)\\% Processor Time'
+            '\\Memory\\Available Bytes'
+            '\\LogicalDisk(C:)\\% Free Space'
+            '\\LogicalDisk(C:)\\Free Megabytes'
+          ]
+        }
+      ]
+      windowsEventLogs: [
+        {
+          name: 'eventLogsDataSource'
+          streams: [
+            'Microsoft-Event'
+          ]
+          xPathQueries: [
+            'System!*[System[(Level=1 or Level=2 or Level=3)]]'
+            'Application!*[System[(Level=1 or Level=2 or Level=3)]]'
+          ]
+        }
+      ]
+    }
+    destinations: {
+      logAnalytics: [
+        {
+          workspaceResourceId: logAnalytics.id
+          name: 'lawDestination'
+        }
+      ]
+    }
+    dataFlows: [
+      {
+        streams: [
+          'Microsoft-Perf'
+        ]
+        destinations: [
+          'lawDestination'
+        ]
+      }
+      {
+        streams: [
+          'Microsoft-Event'
+        ]
+        destinations: [
+          'lawDestination'
+        ]
+      }
+    ]
+  }
+}
+
+// データ収集ルールの関連付け
+resource dcrAssociation 'Microsoft.Insights/dataCollectionRuleAssociations@2022-06-01' = {
+  name: 'dcra-${vmName}'
+  scope: vm
+  properties: {
+    dataCollectionRuleId: dcr.id
+  }
+}
+
+// Recovery Services コンテナー
+resource recoveryServicesVault 'Microsoft.RecoveryServices/vaults@2023-01-01' = {
+  name: rsvName
+  location: location
+  tags: {
+    Environment: environmentTag
+    Purpose: 'Training'
+  }
+  sku: {
+    name: 'RS0'
+    tier: 'Standard'
+  }
+  properties: {}
+}
+
+// バックアップポリシー
+resource backupPolicy 'Microsoft.RecoveryServices/vaults/backupPolicies@2023-01-01' = {
+  parent: recoveryServicesVault
+  name: backupPolicyName
+  properties: {
+    backupManagementType: 'AzureIaasVM'
+    schedulePolicy: {
+      schedulePolicyType: 'SimpleSchedulePolicy'
+      scheduleRunFrequency: 'Daily'
+      scheduleRunTimes: [
+        '2024-01-01T02:00:00Z'
+      ]
+    }
+    retentionPolicy: {
+      retentionPolicyType: 'LongTermRetentionPolicy'
+      dailySchedule: {
+        retentionTimes: [
+          '2024-01-01T02:00:00Z'
+        ]
+        retentionDuration: {
+          count: 7
+          durationType: 'Days'
+        }
+      }
+    }
+    timeZone: 'Tokyo Standard Time'
+  }
+}
+
+// バックアップの保護アイテム
+resource backupProtectedItem 'Microsoft.RecoveryServices/vaults/backupFabrics/protectionContainers/protectedItems@2023-01-01' = {
+  name: '${rsvName}/Azure/iaasvmcontainer;iaasvmcontainerv2;${resourceGroupName};${vmName}/vm;iaasvmcontainerv2;${resourceGroupName};${vmName}'
+  properties: {
+    protectedItemType: 'Microsoft.Compute/virtualMachines'
+    policyId: backupPolicy.id
+    sourceResourceId: vm.id
+  }
+  dependsOn: [
+    recoveryServicesVault
+  ]
+}
+
+// 出力
+output vmName string = vm.name
+output vmId string = vm.id
+output bastionName string = bastion.name
+output logAnalyticsWorkspaceName string = logAnalytics.name
+output recoveryServicesVaultName string = recoveryServicesVault.name
+```
+
+### デプロイ手順
+
+#### 前提条件
+
+1. **Azure CLIのインストール**
+   ```bash
+   # Windows (PowerShell)
+   winget install Microsoft.AzureCLI
+   
+   # Mac
+   brew install azure-cli
+   
+   # Linux
+   curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+   ```
+
+2. **Bicep CLIのインストール**
+   ```bash
+   az bicep install
+   ```
+
+#### デプロイの実行
+
+1. **Azureにログイン**
+   ```bash
+   az login
+   ```
+
+2. **サブスクリプションの設定**
+   ```bash
+   az account set --subscription "your-subscription-id"
+   ```
+
+3. **リソースグループの作成**
+   ```bash
+   az group create --name rg-handson-vm --location japaneast
+   ```
+
+4. **パラメータファイルの作成** (parameters.json)
+   ```json
+   {
+     "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+     "contentVersion": "1.0.0.0",
+     "parameters": {
+       "location": {
+         "value": "japaneast"
+       },
+       "adminUsername": {
+         "value": "azureuser"
+       },
+       "adminPassword": {
+         "value": "YourSecurePassword123!"
+       },
+       "vmSize": {
+         "value": "Standard_B2s"
+       },
+       "environmentTag": {
+         "value": "Hands-on"
+       }
+     }
+   }
+   ```
+
+5. **デプロイの検証**
+   ```bash
+   az deployment group validate \
+     --resource-group rg-handson-vm \
+     --template-file main.bicep \
+     --parameters parameters.json
+   ```
+
+6. **デプロイの実行**
+   ```bash
+   az deployment group create \
+     --resource-group rg-handson-vm \
+     --template-file main.bicep \
+     --parameters parameters.json \
+     --name handson-deployment
+   ```
+
+   > **注意**: デプロイには約15-20分かかります（特にBastionのデプロイに時間がかかります）
+
+7. **デプロイ状況の確認**
+   ```bash
+   az deployment group show \
+     --resource-group rg-handson-vm \
+     --name handson-deployment \
+     --query properties.provisioningState
+   ```
+
+#### デプロイ後の確認
+
+```bash
+# リソースグループ内のリソース一覧
+az resource list --resource-group rg-handson-vm --output table
+
+# 仮想マシンの状態確認
+az vm show --resource-group rg-handson-vm --name vm-handson-win01 --show-details
+
+# Bastionの確認
+az network bastion show --resource-group rg-handson-vm --name bastion-handson
+```
+
+### リソースの削除
+
+テスト後、リソースを削除する場合:
+
+```bash
+az group delete --name rg-handson-vm --yes --no-wait
+```
+
+### Bicepのベストプラクティス
+
+1. **パラメータの活用**: 環境ごとに異なる値はパラメータ化
+2. **変数の使用**: 繰り返し使用する値や計算結果は変数に格納
+3. **モジュール化**: 大規模な場合は機能ごとにモジュールを分割
+4. **タグの統一**: すべてのリソースに一貫したタグを適用
+5. **命名規則**: Azure命名規則に従った名前を使用
+
+### 参考リンク
+
+- [Bicep公式ドキュメント](https://learn.microsoft.com/azure/azure-resource-manager/bicep/)
+- [Bicepサンプル集](https://github.com/Azure/bicep)
+- [Azure クイックスタートテンプレート](https://azure.microsoft.com/resources/templates/)
